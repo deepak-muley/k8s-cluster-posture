@@ -58,10 +58,11 @@ type Snapshot struct {
 // Options selects the kube context label and an optional namespace filter.
 // Progress, when set, receives a line before and after each API list.
 type Options struct {
-	Context   string
-	Server    string
-	Namespace string
-	Progress  func(string)
+	Context    string
+	Kubeconfig string
+	Server     string
+	Namespace  string
+	Progress   func(string)
 }
 
 // Take lists the API objects used by native checks. A failure to reach the
@@ -344,7 +345,7 @@ func SanitizeServer(host string) string {
 
 func list(opt Options, snap *Snapshot, key string, fn func() error) {
 	if opt.Progress != nil {
-		opt.Progress("listing " + key)
+		opt.Progress("native: " + ReadCommand(opt, key))
 	}
 	started := time.Now()
 	err := fn()

@@ -16,9 +16,9 @@ import (
 )
 
 // Options configures one Kubescape invocation.
+// The kube context comes from the process environment, the same way kubectl does.
 type Options struct {
 	Kubeconfig string
-	Context    string
 	Namespace  string
 	Runner     runexec.Runner
 }
@@ -57,13 +57,15 @@ func args(opt Options) []string {
 	if opt.Kubeconfig != "" {
 		out = append(out, "--kubeconfig", opt.Kubeconfig)
 	}
-	if opt.Context != "" {
-		out = append(out, "--kube-context", opt.Context)
-	}
 	if opt.Namespace != "" {
 		out = append(out, "--include-namespaces", opt.Namespace)
 	}
 	return out
+}
+
+// Command is the kubescape invocation Collect will run.
+func Command(opt Options) string {
+	return runexec.Format("kubescape", args(opt))
 }
 
 // Parse converts Kubescape JSON into findings. Several output shapes are accepted.

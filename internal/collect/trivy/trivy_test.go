@@ -73,10 +73,28 @@ func TestCollectSkipsMissingBinary(t *testing.T) {
 	}
 }
 
+func TestCommandOmitsContext(t *testing.T) {
+	got := Command(Options{Namespace: "shop", Kubeconfig: "/tmp/my config"})
+	for _, want := range []string{
+		"trivy k8s ",
+		"--disable-node-collector",
+		"--scanners misconfig,secret",
+		"--kubeconfig '/tmp/my config'",
+		"--include-namespaces shop",
+	} {
+		if !contains(got, want) {
+			t.Fatalf("command %q missing %q", got, want)
+		}
+	}
+	if contains(got, "--context") || contains(got, "kind-") {
+		t.Fatalf("command pins a context: %s", got)
+	}
+}
+
 func TestArgsIncludeImageScanner(t *testing.T) {
-	got := args(Options{ScanImages: true, Namespace: "shop", Context: "dev", Kubeconfig: "/tmp/kube"})
+	got := args(Options{ScanImages: true, Namespace: "shop", Kubeconfig: "/tmp/kube"})
 	joined := " " + join(got) + " "
-	for _, want := range []string{" misconfig,secret,vuln ", " --include-namespaces shop ", " dev ", " --kubeconfig /tmp/kube "} {
+	for _, want := range []string{" misconfig,secret,vuln ", " --disable-node-collector ", " --include-namespaces shop ", " --kubeconfig /tmp/kube "} {
 		if !contains(joined, want) && !contains(join(got), want) {
 			t.Fatalf("args %q missing %q", got, want)
 		}

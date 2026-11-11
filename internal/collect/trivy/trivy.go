@@ -16,9 +16,9 @@ import (
 )
 
 // Options configures one Trivy invocation.
+// The kube context comes from the process environment, the same way kubectl does.
 type Options struct {
 	Kubeconfig string
-	Context    string
 	Namespace  string
 	ScanImages bool
 	Runner     runexec.Runner
@@ -59,10 +59,18 @@ func args(opt Options) []string {
 	if opt.ScanImages {
 		scanners = "misconfig,secret,vuln"
 	}
+	// --disable-node-collector skips the privileged node-collector Job.
+	// That Job's active deadline is about five minutes and is not the
+	// client --timeout. On kind it usually dies with DeadlineExceeded
+	// while pulling ghcr.io/aquasecurity/node-collector, and Trivy then
+	// exits with no JSON, dropping the misconfig, secret, and image
+	// results. Node filesystem checks are host facts this scanner leaves
+	// not_assessable.
 	out := []string{
 		"k8s",
 		"--quiet",
 		"--timeout", "12m",
+		"--disable-node-collector",
 		"--format", "json",
 		"--report", "all",
 		"--scanners", scanners,
@@ -73,10 +81,12 @@ func args(opt Options) []string {
 	if opt.Namespace != "" {
 		out = append(out, "--include-namespaces", opt.Namespace)
 	}
-	if opt.Context != "" {
-		out = append(out, opt.Context)
-	}
 	return out
+}
+
+// Command is the trivy invocation Collect will run.
+func Command(opt Options) string {
+	return runexec.Format("trivy", args(opt))
 }
 
 type report struct {

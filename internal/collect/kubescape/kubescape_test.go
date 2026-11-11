@@ -6,6 +6,14 @@ import (
 	"github.com/deepak-muley/k8s-cluster-posture/internal/model"
 )
 
+func TestCommandUsesResolvedContext(t *testing.T) {
+	got := Command(Options{Namespace: "shop"})
+	want := "kubescape scan framework nsa,mitre --format json --format-version v2 --include-namespaces shop"
+	if got != want {
+		t.Fatalf("got %s", got)
+	}
+}
+
 func TestParseResults(t *testing.T) {
 	raw := []byte(`{
 	  "results": [

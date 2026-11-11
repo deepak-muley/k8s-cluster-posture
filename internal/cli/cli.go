@@ -87,8 +87,10 @@ Exit status:
 Native checks cover RBAC, service accounts, Secrets, Pod Security, network
 policy, admission, images, quotas, and control-plane arguments when the
 kube-apiserver Pod spec is visible. Trivy misconfiguration and secret scans
-run when trivy is installed. Kubescape runs the NSA and MITRE frameworks when
-kubescape is installed. --scan-images adds Trivy vulnerability scanning.
+run when trivy is installed. The node-collector Job is disabled, so a kind
+cluster does not fail the scan when that Job hits its deadline. Kubescape
+runs the NSA and MITRE frameworks when kubescape is installed. --scan-images
+adds Trivy vulnerability scanning.
 
 The default output directory is posture-report-<context>-<UTC timestamp>/.
 Progress is written to stderr while the scan runs. Platform namespaces are tagged
@@ -178,13 +180,16 @@ func runScan(ctx context.Context, stdout, stderr io.Writer, cfg scanConfig) erro
 		return &ExitError{Code: 2, Err: err}
 	}
 	log.printf("context %s, server %s", contextName, restCfg.Host)
+	readOpt := cluster.Options{
+		Context:    contextName,
+		Kubeconfig: cfg.Kubeconfig,
+		Server:     restCfg.Host,
+		Namespace:  cfg.Namespace,
+		Progress:   func(msg string) { log.printf("%s", msg) },
+	}
+	log.printf("native: %s", cluster.VersionCommand(readOpt))
 	log.printf("listing API objects")
-	snap, err := cluster.Take(ctx, client, cluster.Options{
-		Context:   contextName,
-		Server:    restCfg.Host,
-		Namespace: cfg.Namespace,
-		Progress:  func(msg string) { log.printf("%s", msg) },
-	})
+	snap, err := cluster.Take(ctx, client, readOpt)
 	if err != nil {
 		return &ExitError{Code: 2, Err: err}
 	}
@@ -225,12 +230,16 @@ func runScan(ctx context.Context, stdout, stderr io.Writer, cfg scanConfig) erro
 				what = "misconfig, secret, and image vulnerability checks"
 			}
 			log.printf("trivy started (%s)", what)
+			log.printf("trivy command: %s", trivy.Command(trivy.Options{
+				Kubeconfig: cfg.Kubeconfig,
+				Namespace:  cfg.Namespace,
+				ScanImages: cfg.ScanImages,
+			}))
 			tctx = runexec.WithStderr(tctx, &prefixWriter{dst: log, prefix: "trivy"})
 			stop := heartbeat(tctx, log, "trivy")
 			defer stop()
 			trivyFindings, trivyStatus = trivy.Collect(tctx, trivy.Options{
 				Kubeconfig: cfg.Kubeconfig,
-				Context:    contextName,
 				Namespace:  cfg.Namespace,
 				ScanImages: cfg.ScanImages,
 			})
@@ -241,12 +250,15 @@ func runScan(ctx context.Context, stdout, stderr io.Writer, cfg scanConfig) erro
 			tctx, cancel := context.WithTimeout(ctx, 12*time.Minute)
 			defer cancel()
 			log.printf("kubescape started (nsa, mitre)")
+			log.printf("kubescape command: %s", kubescape.Command(kubescape.Options{
+				Kubeconfig: cfg.Kubeconfig,
+				Namespace:  cfg.Namespace,
+			}))
 			tctx = runexec.WithStderr(tctx, &prefixWriter{dst: log, prefix: "kubescape"})
 			stop := heartbeat(tctx, log, "kubescape")
 			defer stop()
 			ksFindings, ksStatus = kubescape.Collect(tctx, kubescape.Options{
 				Kubeconfig: cfg.Kubeconfig,
-				Context:    contextName,
 				Namespace:  cfg.Namespace,
 			})
 			log.printf("kubescape %s, %d findings", collectorDetail(ksStatus), len(ksFindings))

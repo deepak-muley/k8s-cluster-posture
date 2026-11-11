@@ -7,6 +7,14 @@ import (
 	"testing"
 )
 
+func TestFormatQuotesShellMetacharacters(t *testing.T) {
+	got := Format("trivy", []string{"k8s", "--kubeconfig", "/tmp/my config", "kind-global-chat"})
+	want := "trivy k8s --kubeconfig '/tmp/my config' kind-global-chat"
+	if got != want {
+		t.Fatalf("got %s", got)
+	}
+}
+
 func TestRunCopiesStderr(t *testing.T) {
 	var stderr bytes.Buffer
 	ctx := WithStderr(context.Background(), &stderr)

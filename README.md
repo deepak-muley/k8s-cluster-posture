@@ -56,12 +56,52 @@ curl -s https://raw.githubusercontent.com/kubescape/kubescape/master/install.sh 
 
 The Kubescape script installs into `~/.kubescape/bin` when it is not run as root. Open a new shell if that directory was just added to `PATH`. Other packages are listed in the [Trivy installation docs](https://trivy.dev/docs/latest/getting-started/installation/) and the [Kubescape install docs](https://kubescape.io/docs/install-cli/).
 
-A scan then runs:
+The scan log prints the command for each collector. kubectl, Trivy, and Kubescape use the current context from the environment. The commands do not pass `--context`.
+
+Native checks do not shell out. They list the API with client-go. The log prints the kubectl command for each list:
 
 ```bash
-trivy k8s --format json --report all --scanners misconfig,secret
+kubectl version
+kubectl get namespaces
+kubectl get nodes
+kubectl get pods -A
+kubectl get services -A
+kubectl get serviceaccounts -A
+kubectl get secrets -A
+kubectl get roles -A
+kubectl get rolebindings -A
+kubectl get clusterroles
+kubectl get clusterrolebindings
+kubectl get networkpolicies -A
+kubectl get validatingwebhookconfigurations
+kubectl get mutatingwebhookconfigurations
+kubectl get validatingadmissionpolicies
+kubectl get resourcequotas -A
+kubectl get limitranges -A
+kubectl get runtimeclasses
+```
+
+`--namespace shop` changes the namespaced gets from `-A` to `-n shop`. `kubectl get secrets` prints Secret data; the scanner keeps only the name, namespace, and type.
+
+Trivy and Kubescape:
+
+```bash
+trivy k8s --quiet --timeout 12m --disable-node-collector \
+  --format json --report all --scanners misconfig,secret
 kubescape scan framework nsa,mitre --format json --format-version v2
 ```
+
+`--scan-images` changes Trivy's `--scanners` value to `misconfig,secret,vuln`. `--kubeconfig` and `--include-namespaces` are added only when those flags are set.
+
+Drop `--quiet` and `--format json` to read the same scan in a terminal. Kubescape then prints the compliance score and the control table. Trivy prints a table instead of the JSON report:
+
+```bash
+trivy k8s --timeout 12m --disable-node-collector \
+  --report summary --scanners misconfig,secret
+kubescape scan framework nsa,mitre
+```
+
+`--disable-node-collector` is required. Trivy otherwise creates a privileged `node-collector` Job whose own deadline is about five minutes. On kind that Job stays up while the node pulls `ghcr.io/aquasecurity/node-collector`, then fails with `DeadlineExceeded`. Trivy exits with no JSON, so the misconfig, secret, and image results are discarded with it. Those node filesystem checks are host facts this scanner leaves `not_assessable`.
 
 ## Permissions
 

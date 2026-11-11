@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // Runner looks up a binary and runs it.
@@ -28,6 +29,30 @@ type Local struct{}
 
 func (Local) LookPath(file string) (string, error) {
 	return exec.LookPath(file)
+}
+
+// Format renders a command line that can be copied into a shell.
+func Format(name string, args []string) string {
+	parts := make([]string, 0, 1+len(args))
+	if name != "" {
+		parts = append(parts, quote(name))
+	}
+	for _, arg := range args {
+		parts = append(parts, quote(arg))
+	}
+	return strings.Join(parts, " ")
+}
+
+func quote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	for _, r := range s {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && !strings.ContainsRune("._/-:=+,@", r) {
+			return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+		}
+	}
+	return s
 }
 
 func (Local) Run(ctx context.Context, name string, args []string, extraEnv []string) ([]byte, []byte, error) {
