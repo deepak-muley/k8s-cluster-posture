@@ -21,6 +21,7 @@ import (
 	"github.com/deepak-muley/k8s-cluster-posture/internal/collect/trivy"
 	"github.com/deepak-muley/k8s-cluster-posture/internal/model"
 	"github.com/deepak-muley/k8s-cluster-posture/internal/report"
+	"github.com/deepak-muley/k8s-cluster-posture/internal/runexec"
 )
 
 // ExitError is a process status with a message.
@@ -90,8 +91,8 @@ run when trivy is installed. Kubescape runs the NSA and MITRE frameworks when
 kubescape is installed. --scan-images adds Trivy vulnerability scanning.
 
 The default output directory is posture-report-<context>-<UTC timestamp>/.
-Platform namespaces are tagged platform in the report. A control the API cannot
-answer is reported as not assessable.
+Progress is written to stderr while the scan runs. Platform namespaces are tagged
+platform in the report. A control the API cannot answer is reported as not assessable.
 
 Apply deploy/rbac/readonly-clusterrole.yaml to the identity that runs the scan.
 Listing Secrets returns their data. The scanner keeps only name, namespace, and type.`,
@@ -107,7 +108,7 @@ Listing Secrets returns their data. The scanner keeps only name, namespace, and 
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 20*time.Minute)
 			defer cancel()
-			return runScan(ctx, cmd.OutOrStdout(), scanConfig{
+			return runScan(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), scanConfig{
 				Kubeconfig: kubeconfig,
 				Context:    contextName,
 				Namespace:  namespace,
@@ -169,18 +170,27 @@ func parseFailOn(raw string) (model.Severity, error) {
 	}
 }
 
-func runScan(ctx context.Context, stdout io.Writer, cfg scanConfig) error {
+func runScan(ctx context.Context, stdout, stderr io.Writer, cfg scanConfig) error {
+	log := newLogger(stderr)
+	log.printf("reading kubeconfig")
 	client, restCfg, contextName, err := cluster.Connect(cfg.Kubeconfig, cfg.Context)
 	if err != nil {
 		return &ExitError{Code: 2, Err: err}
 	}
+	log.printf("context %s, server %s", contextName, restCfg.Host)
+	log.printf("listing API objects")
 	snap, err := cluster.Take(ctx, client, cluster.Options{
 		Context:   contextName,
 		Server:    restCfg.Host,
 		Namespace: cfg.Namespace,
+		Progress:  func(msg string) { log.printf("%s", msg) },
 	})
 	if err != nil {
 		return &ExitError{Code: 2, Err: err}
+	}
+	log.printf("kubernetes %s, %d nodes, %d namespaces, %d pods, cni %s", snap.Version, len(snap.Nodes), len(snap.Namespaces), len(snap.Pods), snap.CNI)
+	if msg := cluster.ErrorSummary(snap); msg != "" {
+		log.printf("some lists failed: %s", msg)
 	}
 
 	var (
@@ -194,36 +204,57 @@ func runScan(ctx context.Context, stdout io.Writer, cfg scanConfig) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		started := time.Now()
+		log.printf("native checks started")
 		nativeFindings = native.Run(snap)
+		log.printf("native checks finished in %s, %d findings", time.Since(started).Round(time.Millisecond), len(nativeFindings))
 	}()
 	if cfg.SkipTools {
 		trivyStatus = model.Collector{Name: "trivy", Status: "skipped", Detail: "disabled with --skip-tools"}
 		ksStatus = model.Collector{Name: "kubescape", Status: "skipped", Detail: "disabled with --skip-tools"}
+		log.printf("trivy skipped")
+		log.printf("kubescape skipped")
 	} else {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
 			tctx, cancel := context.WithTimeout(ctx, 12*time.Minute)
 			defer cancel()
+			what := "misconfig and secret checks"
+			if cfg.ScanImages {
+				what = "misconfig, secret, and image vulnerability checks"
+			}
+			log.printf("trivy started (%s)", what)
+			tctx = runexec.WithStderr(tctx, &prefixWriter{dst: log, prefix: "trivy"})
+			stop := heartbeat(tctx, log, "trivy")
+			defer stop()
 			trivyFindings, trivyStatus = trivy.Collect(tctx, trivy.Options{
 				Kubeconfig: cfg.Kubeconfig,
 				Context:    contextName,
 				Namespace:  cfg.Namespace,
 				ScanImages: cfg.ScanImages,
 			})
+			log.printf("trivy %s, %d findings", collectorDetail(trivyStatus), len(trivyFindings))
 		}()
 		go func() {
 			defer wg.Done()
 			tctx, cancel := context.WithTimeout(ctx, 12*time.Minute)
 			defer cancel()
+			log.printf("kubescape started (nsa, mitre)")
+			tctx = runexec.WithStderr(tctx, &prefixWriter{dst: log, prefix: "kubescape"})
+			stop := heartbeat(tctx, log, "kubescape")
+			defer stop()
 			ksFindings, ksStatus = kubescape.Collect(tctx, kubescape.Options{
 				Kubeconfig: cfg.Kubeconfig,
 				Context:    contextName,
 				Namespace:  cfg.Namespace,
 			})
+			log.printf("kubescape %s, %d findings", collectorDetail(ksStatus), len(ksFindings))
 		}()
 	}
 	wg.Wait()
+
+	log.printf("writing report")
 
 	findings := collect.Merge(nativeFindings, trivyFindings, ksFindings)
 	rep := model.Report{
@@ -270,4 +301,31 @@ func countLine(rows []model.DomainCount) string {
 		errs += row.Error
 	}
 	return fmt.Sprintf("failures: %d, not assessable: %d, errors: %d", fail, na, errs)
+}
+
+func collectorDetail(status model.Collector) string {
+	if status.Detail == "" {
+		return status.Status
+	}
+	return status.Status + ": " + status.Detail
+}
+
+func heartbeat(ctx context.Context, log *logger, name string) func() {
+	stop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		started := time.Now()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				log.printf("%s still running (%s)", name, time.Since(started).Round(time.Second))
+			}
+		}
+	}()
+	return func() { close(stop) }
 }

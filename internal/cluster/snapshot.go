@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -55,10 +56,12 @@ type Snapshot struct {
 }
 
 // Options selects the kube context label and an optional namespace filter.
+// Progress, when set, receives a line before and after each API list.
 type Options struct {
 	Context   string
 	Server    string
 	Namespace string
+	Progress  func(string)
 }
 
 // Take lists the API objects used by native checks. A failure to reach the
@@ -95,172 +98,204 @@ func Take(ctx context.Context, client kubernetes.Interface, opt Options) (*Snaps
 			}
 		}
 	}
-	record(snap, "namespaces", listNS())
+	list(opt, snap, "namespaces", listNS)
 
-	record(snap, "nodes", eachPage(func(cont string) (string, error) {
-		page, err := client.CoreV1().Nodes().List(ctx, metav1.ListOptions{Continue: cont})
-		if err != nil {
-			return "", err
-		}
-		for i := range page.Items {
-			dropManaged(&page.Items[i].ObjectMeta)
-			snap.Nodes = append(snap.Nodes, page.Items[i])
-		}
-		return page.Continue, nil
-	}))
+	list(opt, snap, "nodes", func() error {
+		return eachPage(func(cont string) (string, error) {
+			page, err := client.CoreV1().Nodes().List(ctx, metav1.ListOptions{Continue: cont})
+			if err != nil {
+				return "", err
+			}
+			for i := range page.Items {
+				dropManaged(&page.Items[i].ObjectMeta)
+				snap.Nodes = append(snap.Nodes, page.Items[i])
+			}
+			return page.Continue, nil
+		})
+	})
 
-	record(snap, "pods", eachPage(func(cont string) (string, error) {
-		page, err := client.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{Continue: cont})
-		if err != nil {
-			return "", err
-		}
-		for i := range page.Items {
-			dropManaged(&page.Items[i].ObjectMeta)
-			snap.Pods = append(snap.Pods, page.Items[i])
-		}
-		return page.Continue, nil
-	}))
+	list(opt, snap, "pods", func() error {
+		return eachPage(func(cont string) (string, error) {
+			page, err := client.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{Continue: cont})
+			if err != nil {
+				return "", err
+			}
+			for i := range page.Items {
+				dropManaged(&page.Items[i].ObjectMeta)
+				snap.Pods = append(snap.Pods, page.Items[i])
+			}
+			return page.Continue, nil
+		})
+	})
 
-	record(snap, "services", eachPage(func(cont string) (string, error) {
-		page, err := client.CoreV1().Services(ns).List(ctx, metav1.ListOptions{Continue: cont})
-		if err != nil {
-			return "", err
-		}
-		for i := range page.Items {
-			dropManaged(&page.Items[i].ObjectMeta)
-			snap.Services = append(snap.Services, page.Items[i])
-		}
-		return page.Continue, nil
-	}))
+	list(opt, snap, "services", func() error {
+		return eachPage(func(cont string) (string, error) {
+			page, err := client.CoreV1().Services(ns).List(ctx, metav1.ListOptions{Continue: cont})
+			if err != nil {
+				return "", err
+			}
+			for i := range page.Items {
+				dropManaged(&page.Items[i].ObjectMeta)
+				snap.Services = append(snap.Services, page.Items[i])
+			}
+			return page.Continue, nil
+		})
+	})
 
-	record(snap, "serviceaccounts", eachPage(func(cont string) (string, error) {
-		page, err := client.CoreV1().ServiceAccounts(ns).List(ctx, metav1.ListOptions{Continue: cont})
-		if err != nil {
-			return "", err
-		}
-		for i := range page.Items {
-			dropManaged(&page.Items[i].ObjectMeta)
-			page.Items[i].Secrets = nil
-			snap.ServiceAccounts = append(snap.ServiceAccounts, page.Items[i])
-		}
-		return page.Continue, nil
-	}))
+	list(opt, snap, "serviceaccounts", func() error {
+		return eachPage(func(cont string) (string, error) {
+			page, err := client.CoreV1().ServiceAccounts(ns).List(ctx, metav1.ListOptions{Continue: cont})
+			if err != nil {
+				return "", err
+			}
+			for i := range page.Items {
+				dropManaged(&page.Items[i].ObjectMeta)
+				page.Items[i].Secrets = nil
+				snap.ServiceAccounts = append(snap.ServiceAccounts, page.Items[i])
+			}
+			return page.Continue, nil
+		})
+	})
 
-	record(snap, "secrets", eachPage(func(cont string) (string, error) {
-		page, err := client.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{Continue: cont})
-		if err != nil {
-			return "", err
-		}
-		for i := range page.Items {
-			snap.Secrets = append(snap.Secrets, SecretRef{
-				Namespace: page.Items[i].Namespace,
-				Name:      page.Items[i].Name,
-				Type:      page.Items[i].Type,
-			})
-			page.Items[i].Data = nil
-			page.Items[i].StringData = nil
-		}
-		return page.Continue, nil
-	}))
+	list(opt, snap, "secrets", func() error {
+		return eachPage(func(cont string) (string, error) {
+			page, err := client.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{Continue: cont})
+			if err != nil {
+				return "", err
+			}
+			for i := range page.Items {
+				snap.Secrets = append(snap.Secrets, SecretRef{
+					Namespace: page.Items[i].Namespace,
+					Name:      page.Items[i].Name,
+					Type:      page.Items[i].Type,
+				})
+				page.Items[i].Data = nil
+				page.Items[i].StringData = nil
+			}
+			return page.Continue, nil
+		})
+	})
 
-	record(snap, "roles", eachPage(func(cont string) (string, error) {
-		page, err := client.RbacV1().Roles(ns).List(ctx, metav1.ListOptions{Continue: cont})
-		if err != nil {
-			return "", err
-		}
-		snap.Roles = append(snap.Roles, page.Items...)
-		return page.Continue, nil
-	}))
+	list(opt, snap, "roles", func() error {
+		return eachPage(func(cont string) (string, error) {
+			page, err := client.RbacV1().Roles(ns).List(ctx, metav1.ListOptions{Continue: cont})
+			if err != nil {
+				return "", err
+			}
+			snap.Roles = append(snap.Roles, page.Items...)
+			return page.Continue, nil
+		})
+	})
 
-	record(snap, "rolebindings", eachPage(func(cont string) (string, error) {
-		page, err := client.RbacV1().RoleBindings(ns).List(ctx, metav1.ListOptions{Continue: cont})
-		if err != nil {
-			return "", err
-		}
-		snap.RoleBindings = append(snap.RoleBindings, page.Items...)
-		return page.Continue, nil
-	}))
+	list(opt, snap, "rolebindings", func() error {
+		return eachPage(func(cont string) (string, error) {
+			page, err := client.RbacV1().RoleBindings(ns).List(ctx, metav1.ListOptions{Continue: cont})
+			if err != nil {
+				return "", err
+			}
+			snap.RoleBindings = append(snap.RoleBindings, page.Items...)
+			return page.Continue, nil
+		})
+	})
 
-	record(snap, "clusterroles", eachPage(func(cont string) (string, error) {
-		page, err := client.RbacV1().ClusterRoles().List(ctx, metav1.ListOptions{Continue: cont})
-		if err != nil {
-			return "", err
-		}
-		snap.ClusterRoles = append(snap.ClusterRoles, page.Items...)
-		return page.Continue, nil
-	}))
+	list(opt, snap, "clusterroles", func() error {
+		return eachPage(func(cont string) (string, error) {
+			page, err := client.RbacV1().ClusterRoles().List(ctx, metav1.ListOptions{Continue: cont})
+			if err != nil {
+				return "", err
+			}
+			snap.ClusterRoles = append(snap.ClusterRoles, page.Items...)
+			return page.Continue, nil
+		})
+	})
 
-	record(snap, "clusterrolebindings", eachPage(func(cont string) (string, error) {
-		page, err := client.RbacV1().ClusterRoleBindings().List(ctx, metav1.ListOptions{Continue: cont})
-		if err != nil {
-			return "", err
-		}
-		snap.ClusterRoleBindings = append(snap.ClusterRoleBindings, page.Items...)
-		return page.Continue, nil
-	}))
+	list(opt, snap, "clusterrolebindings", func() error {
+		return eachPage(func(cont string) (string, error) {
+			page, err := client.RbacV1().ClusterRoleBindings().List(ctx, metav1.ListOptions{Continue: cont})
+			if err != nil {
+				return "", err
+			}
+			snap.ClusterRoleBindings = append(snap.ClusterRoleBindings, page.Items...)
+			return page.Continue, nil
+		})
+	})
 
-	record(snap, "networkpolicies", eachPage(func(cont string) (string, error) {
-		page, err := client.NetworkingV1().NetworkPolicies(ns).List(ctx, metav1.ListOptions{Continue: cont})
-		if err != nil {
-			return "", err
-		}
-		snap.NetworkPolicies = append(snap.NetworkPolicies, page.Items...)
-		return page.Continue, nil
-	}))
+	list(opt, snap, "networkpolicies", func() error {
+		return eachPage(func(cont string) (string, error) {
+			page, err := client.NetworkingV1().NetworkPolicies(ns).List(ctx, metav1.ListOptions{Continue: cont})
+			if err != nil {
+				return "", err
+			}
+			snap.NetworkPolicies = append(snap.NetworkPolicies, page.Items...)
+			return page.Continue, nil
+		})
+	})
 
-	record(snap, "validatingwebhookconfigurations", eachPage(func(cont string) (string, error) {
-		page, err := client.AdmissionregistrationV1().ValidatingWebhookConfigurations().List(ctx, metav1.ListOptions{Continue: cont})
-		if err != nil {
-			return "", err
-		}
-		snap.ValidatingWebhooks = append(snap.ValidatingWebhooks, page.Items...)
-		return page.Continue, nil
-	}))
+	list(opt, snap, "validatingwebhookconfigurations", func() error {
+		return eachPage(func(cont string) (string, error) {
+			page, err := client.AdmissionregistrationV1().ValidatingWebhookConfigurations().List(ctx, metav1.ListOptions{Continue: cont})
+			if err != nil {
+				return "", err
+			}
+			snap.ValidatingWebhooks = append(snap.ValidatingWebhooks, page.Items...)
+			return page.Continue, nil
+		})
+	})
 
-	record(snap, "mutatingwebhookconfigurations", eachPage(func(cont string) (string, error) {
-		page, err := client.AdmissionregistrationV1().MutatingWebhookConfigurations().List(ctx, metav1.ListOptions{Continue: cont})
-		if err != nil {
-			return "", err
-		}
-		snap.MutatingWebhooks = append(snap.MutatingWebhooks, page.Items...)
-		return page.Continue, nil
-	}))
+	list(opt, snap, "mutatingwebhookconfigurations", func() error {
+		return eachPage(func(cont string) (string, error) {
+			page, err := client.AdmissionregistrationV1().MutatingWebhookConfigurations().List(ctx, metav1.ListOptions{Continue: cont})
+			if err != nil {
+				return "", err
+			}
+			snap.MutatingWebhooks = append(snap.MutatingWebhooks, page.Items...)
+			return page.Continue, nil
+		})
+	})
 
-	record(snap, "validatingadmissionpolicies", eachPage(func(cont string) (string, error) {
-		page, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().List(ctx, metav1.ListOptions{Continue: cont})
-		if err != nil {
-			return "", err
-		}
-		snap.ValidatingAdmissionPolicies = append(snap.ValidatingAdmissionPolicies, page.Items...)
-		return page.Continue, nil
-	}))
+	list(opt, snap, "validatingadmissionpolicies", func() error {
+		return eachPage(func(cont string) (string, error) {
+			page, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().List(ctx, metav1.ListOptions{Continue: cont})
+			if err != nil {
+				return "", err
+			}
+			snap.ValidatingAdmissionPolicies = append(snap.ValidatingAdmissionPolicies, page.Items...)
+			return page.Continue, nil
+		})
+	})
 
-	record(snap, "resourcequotas", eachPage(func(cont string) (string, error) {
-		page, err := client.CoreV1().ResourceQuotas(ns).List(ctx, metav1.ListOptions{Continue: cont})
-		if err != nil {
-			return "", err
-		}
-		snap.ResourceQuotas = append(snap.ResourceQuotas, page.Items...)
-		return page.Continue, nil
-	}))
+	list(opt, snap, "resourcequotas", func() error {
+		return eachPage(func(cont string) (string, error) {
+			page, err := client.CoreV1().ResourceQuotas(ns).List(ctx, metav1.ListOptions{Continue: cont})
+			if err != nil {
+				return "", err
+			}
+			snap.ResourceQuotas = append(snap.ResourceQuotas, page.Items...)
+			return page.Continue, nil
+		})
+	})
 
-	record(snap, "limitranges", eachPage(func(cont string) (string, error) {
-		page, err := client.CoreV1().LimitRanges(ns).List(ctx, metav1.ListOptions{Continue: cont})
-		if err != nil {
-			return "", err
-		}
-		snap.LimitRanges = append(snap.LimitRanges, page.Items...)
-		return page.Continue, nil
-	}))
+	list(opt, snap, "limitranges", func() error {
+		return eachPage(func(cont string) (string, error) {
+			page, err := client.CoreV1().LimitRanges(ns).List(ctx, metav1.ListOptions{Continue: cont})
+			if err != nil {
+				return "", err
+			}
+			snap.LimitRanges = append(snap.LimitRanges, page.Items...)
+			return page.Continue, nil
+		})
+	})
 
-	record(snap, "runtimeclasses", eachPage(func(cont string) (string, error) {
-		page, err := client.NodeV1().RuntimeClasses().List(ctx, metav1.ListOptions{Continue: cont})
-		if err != nil {
-			return "", err
-		}
-		snap.RuntimeClasses = append(snap.RuntimeClasses, page.Items...)
-		return page.Continue, nil
-	}))
+	list(opt, snap, "runtimeclasses", func() error {
+		return eachPage(func(cont string) (string, error) {
+			page, err := client.NodeV1().RuntimeClasses().List(ctx, metav1.ListOptions{Continue: cont})
+			if err != nil {
+				return "", err
+			}
+			snap.RuntimeClasses = append(snap.RuntimeClasses, page.Items...)
+			return page.Continue, nil
+		})
+	})
 
 	snap.CNI, snap.CNIEnforces = InferCNI(snap.Pods)
 	return snap, nil
@@ -305,6 +340,24 @@ func SanitizeServer(host string) string {
 	}
 	u.User = nil
 	return u.String()
+}
+
+func list(opt Options, snap *Snapshot, key string, fn func() error) {
+	if opt.Progress != nil {
+		opt.Progress("listing " + key)
+	}
+	started := time.Now()
+	err := fn()
+	record(snap, key, err)
+	if opt.Progress == nil {
+		return
+	}
+	elapsed := time.Since(started).Round(time.Millisecond)
+	if err != nil {
+		opt.Progress(fmt.Sprintf("list %s failed in %s: %v", key, elapsed, err))
+		return
+	}
+	opt.Progress(fmt.Sprintf("listed %s in %s", key, elapsed))
 }
 
 func record(snap *Snapshot, key string, err error) {
