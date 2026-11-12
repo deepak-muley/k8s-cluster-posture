@@ -4,13 +4,13 @@ Status date: 11 November 2026.
 
 This note covers the vulnerabilities that matter for a Kubernetes node this month, and the artifact you have to open to see whether you are affected. Patching the node image does not change packages inside a container. Scanning a container image does not see the kernel the container is running on.
 
-`posture scan --scan-images` asks Trivy to scan **running container images** and records hits as `TRIVY-VULN` (`CVE-…` plus package name). It does not scan the node OS image. A clean container report says nothing about the node kernel.
+`posture scan` asks Trivy to scan **running container images** in the same run as misconfigurations and secrets (`--scanners misconfig,secret,vuln`) and records hits as `TRIVY-VULN` in that report (`CVE-…` plus package name). It does not scan the node OS image. A clean container report says nothing about the node kernel.
 
 ## Where the detail lives
 
 | Question | OS / node image | Container image |
 | --- | --- | --- |
-| What you scan | VM image, cloud VHD, or the node root filesystem (`trivy vm`, `trivy rootfs`) | The image digest (`trivy image`), or the running image via `posture scan --scan-images` |
+| What you scan | VM image, cloud VHD, or the node root filesystem (`trivy vm`, `trivy rootfs`) | The image digest (`trivy image`), or the running image via `posture scan` |
 | Package database | `/var/lib/dpkg/status` (Debian/Ubuntu), RPM database (Azure Linux, RHEL), `/lib/apk/db/installed` (Alpine) | The same files, in an image layer. The distro in the layer can differ from the node. An Ubuntu node often runs an Azure Linux or Alpine container. |
 | Trivy result class | `os-pkgs`. `Target` looks like `node (ubuntu 24.04)`. | `os-pkgs` for distro packages. `lang-pkgs` for pip, npm, jars, Go binaries, and bundled runtimes. `PkgPath` is the file inside the image. |
 | Advisory to trust | The **source package the image actually installed**, on that distro's tracker. Scanners often print a generic name such as `linux` when the node has `linux-azure`. | The advisory for the **image's** distro, not the node's. A backport fix keeps the upstream version string and changes the package revision (`1.1.0-2ubuntu0.1`, `3.3.7-4.azl3`). |
@@ -147,6 +147,22 @@ trivy image --pkg-types library --format json <image@sha256:...>
 In the JSON, `Results[].Class` is `os-pkgs` or `lang-pkgs`, `Results[].Type` is the distro or ecosystem (`ubuntu`, `alpine`, `jar`, `node-pkg`), and each vulnerability has `VulnerabilityID`, `PkgName`, `InstalledVersion`, and `FixedVersion`. `SeveritySource` says which vendor score Trivy used. For a language package, `PkgPath` is the file to open.
 
 `posture` stores a short form of the same container result: control `TRIVY-VULN`, evidence `critical=… high=…; examples: CVE-… <pkg>`. The full package version and the OS-versus-library class are in the Trivy JSON, not in that one-line summary.
+
+## Inventory the cluster
+
+`posture scan` runs image CVEs in the same Trivy command as misconfigurations and secrets. Each workload becomes one `TRIVY-VULN` finding in `report.md`: a severity count and five example ids. The finding does not repeat every package version.
+
+Trivy can write the full list to its own file when you need every installed version. `--report all` keeps every CVE. `--disable-node-collector` skips the privileged node Job. That Job checks node configuration. It is not the image CVE scan, and on kind it usually dies before Trivy can print the report.
+
+```bash
+trivy k8s --timeout 15m --disable-node-collector \
+  --scanners vuln --report all --format json \
+  -o cluster-cves.json
+```
+
+Each vulnerability row has `VulnerabilityID`, `PkgName`, `InstalledVersion`, and `FixedVersion`. `Results[].Class` is `os-pkgs` or `lang-pkgs`. `Results[].Target` names the image. The report covers running container images and the Kubernetes component versions Trivy can read from the API. It does not scan the node OS image. A kind node's root filesystem is outside this file.
+
+The inventory taken from `kind-global-chat` on 11 November 2026 is [kind-global-chat-cves.md](kind-global-chat-cves.md).
 
 ## Sources
 

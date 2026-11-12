@@ -20,7 +20,6 @@ import (
 type Options struct {
 	Kubeconfig string
 	Namespace  string
-	ScanImages bool
 	Runner     runexec.Runner
 }
 
@@ -55,10 +54,9 @@ func Collect(ctx context.Context, opt Options) ([]model.Finding, model.Collector
 }
 
 func args(opt Options) []string {
-	scanners := "misconfig,secret"
-	if opt.ScanImages {
-		scanners = "misconfig,secret,vuln"
-	}
+	// vuln runs in the same invocation as misconfig and secret. Image CVEs
+	// land in the posture report as TRIVY-VULN. The node OS image is not
+	// part of this scan.
 	// --disable-node-collector skips the privileged node-collector Job.
 	// That Job's active deadline is about five minutes and is not the
 	// client --timeout. On kind it usually dies with DeadlineExceeded
@@ -73,7 +71,7 @@ func args(opt Options) []string {
 		"--disable-node-collector",
 		"--format", "json",
 		"--report", "all",
-		"--scanners", scanners,
+		"--scanners", "misconfig,secret,vuln",
 	}
 	if opt.Kubeconfig != "" {
 		out = append(out, "--kubeconfig", opt.Kubeconfig)

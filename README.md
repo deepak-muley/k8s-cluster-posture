@@ -18,13 +18,11 @@ go run ./cmd/posture scan \
   --context dev \
   --namespace shop \
   --output ./out \
-  --scan-images \
   --fail-on high
 ```
 
 - `--skip-tools` skips Trivy and Kubescape.
-- `--scan-images` adds Trivy vulnerability scanning. It is off by default because it needs registry credentials and is slow.
-- `--fail-on high` or `--fail-on critical` exits 1 when a failing finding is at that severity or above.
+- `--fail-on high` or `--fail-on critical` exits 1 when a failing finding is at this severity or above.
 - Exit 2 means the API could not be reached, the arguments were invalid, or the report could not be written.
 - Exit 0 means the scan finished. Findings alone do not change the exit code unless `--fail-on` is set.
 
@@ -87,19 +85,21 @@ Trivy and Kubescape:
 
 ```bash
 trivy k8s --quiet --timeout 12m --disable-node-collector \
-  --format json --report all --scanners misconfig,secret
+  --format json --report all --scanners misconfig,secret,vuln
 kubescape scan framework nsa,mitre --format json --format-version v2
 ```
 
-`--scan-images` changes Trivy's `--scanners` value to `misconfig,secret,vuln`. `--kubeconfig` and `--include-namespaces` are added only when those flags are set.
+`--scanners misconfig,secret,vuln` is one Trivy run. Misconfigurations and secrets are findings in the same report as image CVEs (`TRIVY-VULN`). `--kubeconfig` and `--include-namespaces` are added only when those flags are set. Image scanning needs registry access and is the slow part of the run. It does not scan the node OS image.
 
 Drop `--quiet` and `--format json` to read the same scan in a terminal. Kubescape then prints the compliance score and the control table. Trivy prints a table instead of the JSON report:
 
 ```bash
 trivy k8s --timeout 12m --disable-node-collector \
-  --report summary --scanners misconfig,secret
+  --report summary --scanners misconfig,secret,vuln
 kubescape scan framework nsa,mitre
 ```
+
+Each `TRIVY-VULN` finding in `report.md` is one workload: a severity count and five example CVE ids. A reading copy of every CVE from `kind-global-chat` is [docs/kind-global-chat-cves.md](docs/kind-global-chat-cves.md). How a hit maps to a node image versus a container image is in [docs/november-2026-critical-cves.md](docs/november-2026-critical-cves.md).
 
 `--disable-node-collector` is required. Trivy otherwise creates a privileged `node-collector` Job whose own deadline is about five minutes. On kind that Job stays up while the node pulls `ghcr.io/aquasecurity/node-collector`, then fails with `DeadlineExceeded`. Trivy exits with no JSON, so the misconfig, secret, and image results are discarded with it. Those node filesystem checks are host facts this scanner leaves `not_assessable`.
 
@@ -164,7 +164,7 @@ The fixture namespace is `pod-security.kubernetes.io/enforce: privileged` so the
 | 9 | Container with no memory limit | `PSS-003` | `posture-lab/Pod/leaky` |
 | 10 | Service `externalIPs` | `NET-004` | `posture-lab/Service/exposed` |
 
-The same scan also expects the privileged Pod Security label (`PSA-002`), missing default-deny policies (`NET-001`, `NET-002`), kindnet (`NET-003`), the unpinned `nginx:1.14.2` tag (`IMG-001`), the reader ServiceAccount automount (`SEC-002`), and cluster-wide pod mutation from the wildcard binding (`RBAC-006`). `nginx:1.14.2` is an old image with known CVEs. When `trivy` is on `PATH`, the kind test runs again with `--scan-images` and expects `TRIVY-VULN` on `posture-lab/Pod/old-nginx`.
+The same scan also expects the privileged Pod Security label (`PSA-002`), missing default-deny policies (`NET-001`, `NET-002`), kindnet (`NET-003`), the unpinned `nginx:1.14.2` tag (`IMG-001`), the reader ServiceAccount automount (`SEC-002`), and cluster-wide pod mutation from the wildcard binding (`RBAC-006`). `nginx:1.14.2` is an old image with known CVEs. When `trivy` is on `PATH`, the kind test runs again without `--skip-tools` and expects `TRIVY-VULN` on `posture-lab/Pod/old-nginx`.
 
 ## This version does not
 

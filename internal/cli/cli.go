@@ -77,7 +77,7 @@ Exit status:
 	root.SetErr(stderr)
 
 	var kubeconfig, contextName, namespace, output, failOn string
-	var skipTools, scanImages bool
+	var skipTools bool
 
 	scan := &cobra.Command{
 		Use:   "scan",
@@ -86,11 +86,11 @@ Exit status:
 
 Native checks cover RBAC, service accounts, Secrets, Pod Security, network
 policy, admission, images, quotas, and control-plane arguments when the
-kube-apiserver Pod spec is visible. Trivy misconfiguration and secret scans
-run when trivy is installed. The node-collector Job is disabled, so a kind
-cluster does not fail the scan when that Job hits its deadline. Kubescape
-runs the NSA and MITRE frameworks when kubescape is installed. --scan-images
-adds Trivy vulnerability scanning.
+kube-apiserver Pod spec is visible. Trivy misconfiguration, secret, and
+image vulnerability scans run when trivy is installed. The node-collector
+Job is disabled, so a kind cluster does not fail the scan when that Job
+hits its deadline. Kubescape runs the NSA and MITRE frameworks when
+kubescape is installed. Image CVEs are TRIVY-VULN findings in the same report.
 
 The default output directory is posture-report-<context>-<UTC timestamp>/.
 Progress is written to stderr while the scan runs. Platform namespaces are tagged
@@ -101,7 +101,7 @@ Listing Secrets returns their data. The scanner keeps only name, namespace, and 
 		Example: `  posture scan
   posture scan --kubeconfig ~/.kube/config --context dev
   posture scan --namespace shop --output ./out --skip-tools
-  posture scan --scan-images --fail-on critical`,
+  posture scan --fail-on critical`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			threshold, err := parseFailOn(failOn)
@@ -116,7 +116,6 @@ Listing Secrets returns their data. The scanner keeps only name, namespace, and 
 				Namespace:  namespace,
 				Output:     output,
 				SkipTools:  skipTools,
-				ScanImages: scanImages,
 				FailOn:     threshold,
 				Now:        time.Now(),
 			})
@@ -127,7 +126,6 @@ Listing Secrets returns their data. The scanner keeps only name, namespace, and 
 	scan.Flags().StringVar(&namespace, "namespace", "", "limit namespaced objects to this namespace; cluster-scoped checks still run")
 	scan.Flags().StringVar(&output, "output", "", "directory for report.json and report.md (default: posture-report-<context>-<timestamp>)")
 	scan.Flags().BoolVar(&skipTools, "skip-tools", false, "do not run trivy or kubescape")
-	scan.Flags().BoolVar(&scanImages, "scan-images", false, "also ask trivy to scan running images for vulnerabilities (slow, needs registry access)")
 	scan.Flags().StringVar(&failOn, "fail-on", "", "exit 1 when a failing finding is at this severity or above: high or critical")
 
 	controls := &cobra.Command{
@@ -154,7 +152,6 @@ type scanConfig struct {
 	Namespace  string
 	Output     string
 	SkipTools  bool
-	ScanImages bool
 	FailOn     model.Severity
 	Now        time.Time
 }
@@ -225,15 +222,10 @@ func runScan(ctx context.Context, stdout, stderr io.Writer, cfg scanConfig) erro
 			defer wg.Done()
 			tctx, cancel := context.WithTimeout(ctx, 12*time.Minute)
 			defer cancel()
-			what := "misconfig and secret checks"
-			if cfg.ScanImages {
-				what = "misconfig, secret, and image vulnerability checks"
-			}
-			log.printf("trivy started (%s)", what)
+			log.printf("trivy started (misconfig, secret, and image vulnerability checks)")
 			log.printf("trivy command: %s", trivy.Command(trivy.Options{
 				Kubeconfig: cfg.Kubeconfig,
 				Namespace:  cfg.Namespace,
-				ScanImages: cfg.ScanImages,
 			}))
 			tctx = runexec.WithStderr(tctx, &prefixWriter{dst: log, prefix: "trivy"})
 			stop := heartbeat(tctx, log, "trivy")
@@ -241,7 +233,6 @@ func runScan(ctx context.Context, stdout, stderr io.Writer, cfg scanConfig) erro
 			trivyFindings, trivyStatus = trivy.Collect(tctx, trivy.Options{
 				Kubeconfig: cfg.Kubeconfig,
 				Namespace:  cfg.Namespace,
-				ScanImages: cfg.ScanImages,
 			})
 			log.printf("trivy %s, %d findings", collectorDetail(trivyStatus), len(trivyFindings))
 		}()

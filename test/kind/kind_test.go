@@ -92,8 +92,6 @@ func scan(t *testing.T, ctx context.Context, root, kubeconfig string, skipTools 
 	args := []string{"run", "./cmd/posture", "scan", "--kubeconfig", kubeconfig, "--context", "kind-" + clusterName, "--output", out}
 	if skipTools {
 		args = append(args, "--skip-tools")
-	} else {
-		args = append(args, "--scan-images")
 	}
 	cmd := exec.CommandContext(ctx, "go", args...)
 	cmd.Dir = root

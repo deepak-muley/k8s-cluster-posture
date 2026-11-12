@@ -78,7 +78,7 @@ func TestCommandOmitsContext(t *testing.T) {
 	for _, want := range []string{
 		"trivy k8s ",
 		"--disable-node-collector",
-		"--scanners misconfig,secret",
+		"--scanners misconfig,secret,vuln",
 		"--kubeconfig '/tmp/my config'",
 		"--include-namespaces shop",
 	} {
@@ -88,16 +88,6 @@ func TestCommandOmitsContext(t *testing.T) {
 	}
 	if contains(got, "--context") || contains(got, "kind-") {
 		t.Fatalf("command pins a context: %s", got)
-	}
-}
-
-func TestArgsIncludeImageScanner(t *testing.T) {
-	got := args(Options{ScanImages: true, Namespace: "shop", Kubeconfig: "/tmp/kube"})
-	joined := " " + join(got) + " "
-	for _, want := range []string{" misconfig,secret,vuln ", " --disable-node-collector ", " --include-namespaces shop ", " --kubeconfig /tmp/kube "} {
-		if !contains(joined, want) && !contains(join(got), want) {
-			t.Fatalf("args %q missing %q", got, want)
-		}
 	}
 }
 
@@ -127,15 +117,4 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
-}
-
-func join(args []string) string {
-	out := ""
-	for i, a := range args {
-		if i > 0 {
-			out += " "
-		}
-		out += a
-	}
-	return out
 }
