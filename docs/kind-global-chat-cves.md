@@ -16,7 +16,7 @@ trivy k8s --timeout 15m --disable-node-collector \
 
 The scan does not open the kind node root filesystem. A kernel CVE such as CVE-2026-98432 will not appear here. CVE-2026-123158 (OpenSSH) and CVE-2026-111497 (Brotli) were not present in these images.
 
-Counts below are distinct CVE ids. The same Go CVE is counted once per workload even when several binaries in that image contain it. The machine-readable copy, with `InstalledVersion` on every row, is `posture-report-kind-global-chat-20261111T194343Z/trivy-vuln.json`.
+Counts below are distinct CVE ids. The same Go CVE is counted once per workload even when several binaries in that image contain it. The machine-readable copy, with `InstalledVersion` on every row, is `reports/posture-report-kind-global-chat-20261111T194343Z/trivy-vuln.json`.
 
 ## By workload
 

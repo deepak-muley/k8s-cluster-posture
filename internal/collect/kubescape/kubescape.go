@@ -23,7 +23,15 @@ type Options struct {
 	Runner     runexec.Runner
 }
 
-// Collect runs the NSA and MITRE frameworks and converts failed controls.
+// frameworks is the set for a self-managed cluster such as kind or NKP.
+// cis-v1.12.0 is the vanilla CIS Kubernetes benchmark. The EKS, AKS, and
+// GKE benchmarks are different catalogs. soc2 adds ingress TLS and
+// PersistentVolume encryption, which the native checks do not cover.
+const frameworks = "nsa,mitre,cis-v1.12.0,soc2"
+
+// Collect runs the NSA, MITRE, CIS, and SOC2 frameworks.
+// A failed control becomes a finding. A skipped control, usually because
+// the Kubescape node-agent is absent, becomes not assessable.
 func Collect(ctx context.Context, opt Options) ([]model.Finding, model.Collector) {
 	runner := opt.Runner
 	if runner == nil {
@@ -53,7 +61,7 @@ func Collect(ctx context.Context, opt Options) ([]model.Finding, model.Collector
 }
 
 func args(opt Options) []string {
-	out := []string{"scan", "framework", "nsa,mitre", "--format", "json", "--format-version", "v2"}
+	out := []string{"scan", "framework", frameworks, "--format", "json", "--format-version", "v2"}
 	if opt.Kubeconfig != "" {
 		out = append(out, "--kubeconfig", opt.Kubeconfig)
 	}
@@ -99,10 +107,19 @@ func Parse(data []byte) ([]model.Finding, error) {
 			Source:   model.SourceKubescape,
 			DocURL:   "https://kubescape.io/docs/frameworks-and-controls/",
 		}
-		if item.name != "" {
+		if item.skipped {
+			finding.Status = model.StatusNotAssessable
+			finding.Severity = collect.ParseSeverity(item.severity)
+			finding.Scope = model.ScopeCluster
+			finding.Evidence = skipEvidence(item.reason)
+			finding.Remediation = skipRemediation(item.reason)
+		} else if item.name != "" {
 			finding.Evidence = item.id + " " + item.name
 		}
 		finding = collect.ApplyMappedControl(finding, externalID, item.name)
+		if item.skipped {
+			finding.Status = model.StatusNotAssessable
+		}
 		if finding.Domain == catalog.DomainEcosystem && finding.Title == "" {
 			finding.Title = item.name
 		}
@@ -115,6 +132,9 @@ type rawControl struct {
 	id       string
 	name     string
 	resource string
+	skipped  bool
+	reason   string
+	severity string
 }
 
 func knownShape(v any) bool {
@@ -137,23 +157,45 @@ func walk(v any, inherited string, out *[]rawControl, seen map[string]bool) {
 		if id := stringField(node, "resourceID", "resourceId"); id != "" {
 			resource = collect.NormalizeResource(id)
 		}
-		if cid := stringField(node, "controlID", "controlId"); cid != "" && failedStatus(node["status"]) {
-			name := stringField(node, "name", "controlName")
-			targets := resourceIDs(node["resources"])
-			if len(targets) == 0 {
-				if resource != "" {
-					targets = []string{resource}
-				} else {
-					targets = []string{""}
+		if cid := stringField(node, "controlID", "controlId"); cid != "" {
+			word := statusWord(node["status"])
+			switch {
+			case isFailWord(word):
+				// summaryDetails repeats each failed control with an empty
+				// resourceIDs map. The resource rows are under results.
+				if _, summary := node["resourceIDs"]; summary {
+					break
 				}
-			}
-			for _, target := range targets {
-				key := cid + "\x00" + target
+				name := stringField(node, "name", "controlName")
+				targets := resourceIDs(node["resources"])
+				if len(targets) == 0 {
+					if resource != "" {
+						targets = []string{resource}
+					} else {
+						targets = []string{""}
+					}
+				}
+				for _, target := range targets {
+					key := cid + "\x00" + target
+					if seen[key] {
+						continue
+					}
+					seen[key] = true
+					*out = append(*out, rawControl{id: cid, name: name, resource: target})
+				}
+			case word == "skipped":
+				key := cid + "\x00skipped"
 				if seen[key] {
-					continue
+					break
 				}
 				seen[key] = true
-				*out = append(*out, rawControl{id: cid, name: name, resource: target})
+				*out = append(*out, rawControl{
+					id:       cid,
+					name:     stringField(node, "name", "controlName"),
+					skipped:  true,
+					reason:   skipInfo(node),
+					severity: stringField(node, "severity"),
+				})
 			}
 		}
 		for _, child := range node {
@@ -184,16 +226,63 @@ func resourceIDs(v any) []string {
 	return out
 }
 
-func failedStatus(v any) bool {
+func statusWord(v any) string {
 	switch status := v.(type) {
 	case string:
-		return isFailWord(status)
+		return strings.ToLower(strings.TrimSpace(status))
 	case map[string]any:
 		if inner, ok := status["status"]; ok {
-			return failedStatus(inner)
+			return statusWord(inner)
 		}
 	}
-	return false
+	return ""
+}
+
+func skipInfo(node map[string]any) string {
+	switch raw := node["statusInfo"].(type) {
+	case map[string]any:
+		if info := stringField(raw, "info"); info != "" {
+			return info
+		}
+		return stringField(raw, "subStatus")
+	case string:
+		return raw
+	default:
+		if m, ok := node["status"].(map[string]any); ok {
+			if info := stringField(m, "info"); info != "" {
+				return info
+			}
+			return stringField(m, "subStatus")
+		}
+		return ""
+	}
+}
+
+func skipEvidence(info string) string {
+	lower := strings.ToLower(info)
+	switch {
+	case strings.Contains(lower, "manual"):
+		return "Kubescape marks this control as manual review."
+	case strings.Contains(info, "ControlPlaneInfo"):
+		return "Control-plane files are not visible from the API. Kubescape needs its node-agent for this check."
+	case strings.Contains(info, "Kubelet"):
+		return "Kubelet configuration is not visible from the API. Kubescape needs its node-agent for this check."
+	case strings.Contains(info, "CNIInfo"):
+		return "CNI configuration on the node is not visible from the API. Kubescape needs its node-agent for this check."
+	case strings.Contains(info, "KubeProxyInfo"):
+		return "kube-proxy configuration on the node is not visible from the API. Kubescape needs its node-agent for this check."
+	case info != "":
+		return info
+	default:
+		return "Kubescape did not evaluate this control."
+	}
+}
+
+func skipRemediation(info string) string {
+	if strings.Contains(strings.ToLower(info), "manual") {
+		return "Review this control by hand. Kubescape does not evaluate it from the API."
+	}
+	return "Install the Kubescape node-agent so the scan can read control-plane, kubelet, and CNI files on the node."
 }
 
 func isFailWord(s string) bool {

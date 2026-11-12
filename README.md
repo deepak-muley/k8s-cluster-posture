@@ -26,7 +26,7 @@ go run ./cmd/posture scan \
 - Exit 2 means the API could not be reached, the arguments were invalid, or the report could not be written.
 - Exit 0 means the scan finished. Findings alone do not change the exit code unless `--fail-on` is set.
 
-The default directory is `posture-report-<context>-<timestamp>/` and contains `report.json` and `report.md`.
+The default directory is `reports/posture-report-<context>-<timestamp>/` and contains `report.json` and `report.md`. `reports/` is gitignored.
 
 Trivy and Kubescape are optional. `posture` runs them only when the `trivy` and `kubescape` binaries are on `PATH`. A missing binary is skipped and the native report is still written. A tool that prints unexpected JSON is recorded as a collector error.
 
@@ -43,7 +43,7 @@ On macOS or Linux with Homebrew:
 brew install trivy kubescape
 ```
 
-The Homebrew Kubescape formula is enough for this scanner. It runs `kubescape scan framework nsa,mitre`. The kubectl plugin from `kubectl krew install kubescape` is named `kubectl-kubescape`, and `posture` does not look for that name.
+The Homebrew Kubescape formula is enough for this scanner. It runs `kubescape scan framework nsa,mitre,cis-v1.12.0,soc2`. The kubectl plugin from `kubectl krew install kubescape` is named `kubectl-kubescape`, and `posture` does not look for that name.
 
 Without Homebrew, the upstream installers place the binaries on `PATH`. Read each script before running it.
 
@@ -85,18 +85,20 @@ Trivy and Kubescape:
 
 ```bash
 trivy k8s --quiet --timeout 12m --disable-node-collector \
-  --format json --report all --scanners misconfig,secret,vuln
-kubescape scan framework nsa,mitre --format json --format-version v2
+  --format json --report all --scanners vuln,misconfig,secret,rbac
+kubescape scan framework nsa,mitre,cis-v1.12.0,soc2 --format json --format-version v2
 ```
 
-`--scanners misconfig,secret,vuln` is one Trivy run. Misconfigurations and secrets are findings in the same report as image CVEs (`TRIVY-VULN`). `--kubeconfig` and `--include-namespaces` are added only when those flags are set. Image scanning needs registry access and is the slow part of the run. It does not scan the node OS image.
+`--scanners vuln,misconfig,secret,rbac` is every scanner `trivy k8s` accepts, in one run. Image CVEs are `TRIVY-VULN`. RBAC checks are misconfigurations on Role, RoleBinding, ClusterRole, and ClusterRoleBinding. A title that matches a native control, such as cluster-admin or a wildcard rule, is recorded on that control. `--kubeconfig` and `--include-namespaces` are added only when those flags are set. Image scanning needs registry access and is the slow part of the run. It does not scan the node OS image.
+
+Kubescape runs NSA, MITRE, the vanilla CIS Kubernetes benchmark `cis-v1.12.0`, and SOC 2. That CIS benchmark is the one for kind, kubeadm, and NKP. The EKS, AKS, and GKE benchmarks are separate catalogs and are not scanned. SOC 2 adds ingress TLS and PersistentVolume encryption. A Kubescape control that fails is a finding. A control Kubescape skips, because the node-agent is not installed or the control is manual review, is `not_assessable`.
 
 Drop `--quiet` and `--format json` to read the same scan in a terminal. Kubescape then prints the compliance score and the control table. Trivy prints a table instead of the JSON report:
 
 ```bash
 trivy k8s --timeout 12m --disable-node-collector \
-  --report summary --scanners misconfig,secret,vuln
-kubescape scan framework nsa,mitre
+  --report summary --scanners vuln,misconfig,secret,rbac
+kubescape scan framework nsa,mitre,cis-v1.12.0,soc2
 ```
 
 Each `TRIVY-VULN` finding in `report.md` is one workload: a severity count and five example CVE ids. A reading copy of every CVE from `kind-global-chat` is [docs/kind-global-chat-cves.md](docs/kind-global-chat-cves.md). How a hit maps to a node image versus a container image is in [docs/november-2026-critical-cves.md](docs/november-2026-critical-cves.md).

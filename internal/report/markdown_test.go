@@ -1,6 +1,7 @@
 package report
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -44,7 +45,7 @@ func TestMarkdownIncludesFailuresAndSummary(t *testing.T) {
 
 func TestOutputDirSanitizesContext(t *testing.T) {
 	got := OutputDir("dev/cluster:1", time.Date(2026, 11, 11, 1, 2, 3, 0, time.UTC))
-	if got != "posture-report-dev-cluster-1-20261111T010203Z" {
+	if got != filepath.Join("reports", "posture-report-dev-cluster-1-20261111T010203Z") {
 		t.Fatalf("got %s", got)
 	}
 }

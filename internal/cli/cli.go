@@ -86,13 +86,14 @@ Exit status:
 
 Native checks cover RBAC, service accounts, Secrets, Pod Security, network
 policy, admission, images, quotas, and control-plane arguments when the
-kube-apiserver Pod spec is visible. Trivy misconfiguration, secret, and
-image vulnerability scans run when trivy is installed. The node-collector
+kube-apiserver Pod spec is visible. Trivy vulnerability, misconfiguration,
+secret, and RBAC scans run when trivy is installed. The node-collector
 Job is disabled, so a kind cluster does not fail the scan when that Job
-hits its deadline. Kubescape runs the NSA and MITRE frameworks when
-kubescape is installed. Image CVEs are TRIVY-VULN findings in the same report.
+hits its deadline. Kubescape runs the NSA, MITRE, CIS Kubernetes v1.12,
+and SOC 2 frameworks when kubescape is installed. Image CVEs are
+TRIVY-VULN findings in the same report.
 
-The default output directory is posture-report-<context>-<UTC timestamp>/.
+The default output directory is reports/posture-report-<context>-<UTC timestamp>/.
 Progress is written to stderr while the scan runs. Platform namespaces are tagged
 platform in the report. A control the API cannot answer is reported as not assessable.
 
@@ -124,7 +125,7 @@ Listing Secrets returns their data. The scanner keeps only name, namespace, and 
 	scan.Flags().StringVar(&kubeconfig, "kubeconfig", "", "kubeconfig file (default: KUBECONFIG, then ~/.kube/config)")
 	scan.Flags().StringVar(&contextName, "context", "", "kubeconfig context (default: the current context)")
 	scan.Flags().StringVar(&namespace, "namespace", "", "limit namespaced objects to this namespace; cluster-scoped checks still run")
-	scan.Flags().StringVar(&output, "output", "", "directory for report.json and report.md (default: posture-report-<context>-<timestamp>)")
+	scan.Flags().StringVar(&output, "output", "", "directory for report.json and report.md (default: reports/posture-report-<context>-<timestamp>)")
 	scan.Flags().BoolVar(&skipTools, "skip-tools", false, "do not run trivy or kubescape")
 	scan.Flags().StringVar(&failOn, "fail-on", "", "exit 1 when a failing finding is at this severity or above: high or critical")
 
@@ -222,7 +223,7 @@ func runScan(ctx context.Context, stdout, stderr io.Writer, cfg scanConfig) erro
 			defer wg.Done()
 			tctx, cancel := context.WithTimeout(ctx, 12*time.Minute)
 			defer cancel()
-			log.printf("trivy started (misconfig, secret, and image vulnerability checks)")
+			log.printf("trivy started (vulnerability, misconfig, secret, and rbac checks)")
 			log.printf("trivy command: %s", trivy.Command(trivy.Options{
 				Kubeconfig: cfg.Kubeconfig,
 				Namespace:  cfg.Namespace,
@@ -240,7 +241,7 @@ func runScan(ctx context.Context, stdout, stderr io.Writer, cfg scanConfig) erro
 			defer wg.Done()
 			tctx, cancel := context.WithTimeout(ctx, 12*time.Minute)
 			defer cancel()
-			log.printf("kubescape started (nsa, mitre)")
+			log.printf("kubescape started (nsa, mitre, cis-v1.12.0, soc2)")
 			log.printf("kubescape command: %s", kubescape.Command(kubescape.Options{
 				Kubeconfig: cfg.Kubeconfig,
 				Namespace:  cfg.Namespace,

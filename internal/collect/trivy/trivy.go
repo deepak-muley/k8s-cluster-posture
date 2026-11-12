@@ -54,16 +54,16 @@ func Collect(ctx context.Context, opt Options) ([]model.Finding, model.Collector
 }
 
 func args(opt Options) []string {
-	// vuln runs in the same invocation as misconfig and secret. Image CVEs
-	// land in the posture report as TRIVY-VULN. The node OS image is not
-	// part of this scan.
+	// These are every scanner trivy k8s accepts. Image CVEs land in the
+	// posture report as TRIVY-VULN. RBAC checks are misconfigurations on
+	// Role, RoleBinding, ClusterRole, and ClusterRoleBinding. The node OS
+	// image is not part of this scan.
 	// --disable-node-collector skips the privileged node-collector Job.
 	// That Job's active deadline is about five minutes and is not the
 	// client --timeout. On kind it usually dies with DeadlineExceeded
 	// while pulling ghcr.io/aquasecurity/node-collector, and Trivy then
-	// exits with no JSON, dropping the misconfig, secret, and image
-	// results. Node filesystem checks are host facts this scanner leaves
-	// not_assessable.
+	// exits with no JSON, dropping the other results. Node filesystem
+	// checks are host facts this scanner leaves not_assessable.
 	out := []string{
 		"k8s",
 		"--quiet",
@@ -71,7 +71,7 @@ func args(opt Options) []string {
 		"--disable-node-collector",
 		"--format", "json",
 		"--report", "all",
-		"--scanners", "misconfig,secret,vuln",
+		"--scanners", "vuln,misconfig,secret,rbac",
 	}
 	if opt.Kubeconfig != "" {
 		out = append(out, "--kubeconfig", opt.Kubeconfig)

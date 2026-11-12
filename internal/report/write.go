@@ -30,13 +30,17 @@ func Write(dir string, rep model.Report) error {
 	return nil
 }
 
-// OutputDir is the default directory name for a scan.
+// Root is the directory that holds generated scan reports.
+const Root = "reports"
+
+// OutputDir is the default directory for a scan, under Root.
 func OutputDir(contextName string, now time.Time) string {
 	safe := sanitize(contextName)
 	if safe == "" {
 		safe = "cluster"
 	}
-	return fmt.Sprintf("posture-report-%s-%s", safe, now.UTC().Format("20060102T150405Z"))
+	name := fmt.Sprintf("posture-report-%s-%s", safe, now.UTC().Format("20060102T150405Z"))
+	return filepath.Join(Root, name)
 }
 
 func sanitize(value string) string {

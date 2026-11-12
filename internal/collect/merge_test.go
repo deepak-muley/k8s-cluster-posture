@@ -36,9 +36,15 @@ func TestMergeKeepsNativeAndRecordsAgreement(t *testing.T) {
 		ControlID: "PSS-002",
 		Status:    model.StatusPass,
 		Source:    model.SourceTrivy,
+	}, {
+		ControlID: "KS-C-0092",
+		Domain:    "ecosystem",
+		Title:     "API server file permissions",
+		Status:    model.StatusNotAssessable,
+		Source:    model.SourceKubescape,
 	}}
 	got := Merge(trivy, native)
-	if len(got) != 3 {
+	if len(got) != 4 {
 		t.Fatalf("len = %d, findings %+v", len(got), got)
 	}
 	var agreed bool
@@ -54,6 +60,9 @@ func TestMergeKeepsNativeAndRecordsAgreement(t *testing.T) {
 		}
 		if f.ControlID == "PSS-002" && f.Status != model.StatusPass {
 			t.Fatalf("pass was replaced: %+v", f)
+		}
+		if f.ControlID == "KS-C-0092" && f.Status != model.StatusNotAssessable {
+			t.Fatalf("skipped control dropped: %+v", f)
 		}
 	}
 	if !agreed {

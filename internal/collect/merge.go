@@ -16,7 +16,7 @@ func Merge(groups ...[]model.Finding) []model.Finding {
 	index := map[key]int{}
 	for _, group := range groups {
 		for _, finding := range group {
-			if finding.Source != model.SourceNative && finding.Status != model.StatusFail {
+			if finding.Source != model.SourceNative && finding.Status != model.StatusFail && finding.Status != model.StatusNotAssessable {
 				continue
 			}
 			k := key{finding.ControlID, finding.Resource}

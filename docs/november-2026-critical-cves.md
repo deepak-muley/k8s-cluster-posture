@@ -4,7 +4,7 @@ Status date: 11 November 2026.
 
 This note covers the vulnerabilities that matter for a Kubernetes node this month, and the artifact you have to open to see whether you are affected. Patching the node image does not change packages inside a container. Scanning a container image does not see the kernel the container is running on.
 
-`posture scan` asks Trivy to scan **running container images** in the same run as misconfigurations and secrets (`--scanners misconfig,secret,vuln`) and records hits as `TRIVY-VULN` in that report (`CVE-…` plus package name). It does not scan the node OS image. A clean container report says nothing about the node kernel.
+`posture scan` asks Trivy to scan **running container images** in the same run as misconfigurations, secrets, and RBAC (`--scanners vuln,misconfig,secret,rbac`) and records hits as `TRIVY-VULN` in that report (`CVE-…` plus package name). It does not scan the node OS image. A clean container report says nothing about the node kernel.
 
 ## Where the detail lives
 
@@ -150,7 +150,7 @@ In the JSON, `Results[].Class` is `os-pkgs` or `lang-pkgs`, `Results[].Type` is 
 
 ## Inventory the cluster
 
-`posture scan` runs image CVEs in the same Trivy command as misconfigurations and secrets. Each workload becomes one `TRIVY-VULN` finding in `report.md`: a severity count and five example ids. The finding does not repeat every package version.
+`posture scan` runs image CVEs in the same Trivy command as misconfigurations, secrets, and RBAC. Each workload becomes one `TRIVY-VULN` finding in `report.md`: a severity count and five example ids. The finding does not repeat every package version.
 
 Trivy can write the full list to its own file when you need every installed version. `--report all` keeps every CVE. `--disable-node-collector` skips the privileged node Job. That Job checks node configuration. It is not the image CVE scan, and on kind it usually dies before Trivy can print the report.
 

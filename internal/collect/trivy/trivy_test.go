@@ -32,6 +32,18 @@ func TestParseClusterReport(t *testing.T) {
 	          ]
 	        }
 	      ]
+	    },
+	    {
+	      "Kind": "ClusterRole",
+	      "Name": "deployer",
+	      "Results": [
+	        {
+	          "Misconfigurations": [
+	            {"ID": "KSV048", "Title": "Role uses a wildcard verb", "Message": "verbs include *", "Severity": "HIGH", "Status": "FAIL"},
+	            {"ID": "KSV041", "Title": "Manage secrets", "Message": "secrets are manageable", "Severity": "MEDIUM", "Status": "FAIL", "PrimaryURL": "https://avd.aquasec.com/misconfig/ksv041"}
+	          ]
+	        }
+	      ]
 	    }
 	  ]
 	}`)
@@ -58,6 +70,12 @@ func TestParseClusterReport(t *testing.T) {
 	if contains(seen["TRIVY-SECRET"].Evidence, "should-not-appear") {
 		t.Fatal("secret match text leaked into the report")
 	}
+	if seen["RBAC-002"].Resource != "ClusterRole/deployer" || seen["RBAC-002"].Source != model.SourceTrivy {
+		t.Fatalf("rbac wildcard = %+v", seen["RBAC-002"])
+	}
+	if seen["TRIVY-KSV041"].Resource != "ClusterRole/deployer" || seen["TRIVY-KSV041"].DocURL == "" {
+		t.Fatalf("unmapped rbac = %+v", seen["TRIVY-KSV041"])
+	}
 }
 
 func TestParseRejectsUnknownJSON(t *testing.T) {
@@ -78,7 +96,7 @@ func TestCommandOmitsContext(t *testing.T) {
 	for _, want := range []string{
 		"trivy k8s ",
 		"--disable-node-collector",
-		"--scanners misconfig,secret,vuln",
+		"--scanners vuln,misconfig,secret,rbac",
 		"--kubeconfig '/tmp/my config'",
 		"--include-namespaces shop",
 	} {
